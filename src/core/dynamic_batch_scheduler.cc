@@ -406,6 +406,7 @@ DynamicBatchScheduler::GetDynamicBatch()
           (best_preferred_batch_size == 0)) {
         best_preferred_batch_size = pending_batch_size_;
         queue_.MarkCursor();
+        payload_saturated_ = true;
       }
       if ((payload_batch_size + pending_batch_size_ + batch_size) >
           max_batch_size_) {

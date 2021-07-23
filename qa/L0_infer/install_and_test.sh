@@ -1,4 +1,5 @@
-# Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+#!/bin/bash
+# Copyright (c) 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -24,18 +25,16 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
-import triton_python_backend_utils as pb_utils
+# Note: This script is to be used with customized triton containers that need 
+# dependencies to run L0_infer tests
+apt-get update && \
+    apt-get install -y --no-install-recommends \
+         python3 \
+         python3-pip && \
+pip3 install --upgrade pip
+# install client libraries
+pip3 install nvidia-pyindex
+pip3 install tritonclient[all]
 
-
-class TritonPythonModel:
-
-    def initialize(self, args):
-        # Make sure that environment variables are correctly propagated
-        # to the Python models
-        if "MY_ENV" not in os.environ or os.environ["MY_ENV"] != 'MY_ENV':
-            raise pb_utils.TritonModelException(
-                "MY_ENV doesn't exists or contains incorrect value")
-
-    def execute(self, requests):
-        pass
+# Run the actual test
+bash -x test.sh

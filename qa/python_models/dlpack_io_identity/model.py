@@ -1,4 +1,4 @@
-# Copyright 2020-2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -24,57 +24,45 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import numpy as np
-
-import torch
-import torch.nn as nn
-import torchvision.models as models
-import torch.nn.functional as F
-
 import triton_python_backend_utils as pb_utils
-
-
-class Net(nn.Module):
-    def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
-        self.dropout1 = nn.Dropout2d(0.25)
-        self.dropout2 = nn.Dropout2d(0.5)
-        self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 2)
-        x = self.dropout1(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.dropout2(x)
-        x = self.fc2(x)
-        output = F.log_softmax(x, dim=1)
-        return output
+from torch.utils.dlpack import to_dlpack, from_dlpack
+import numpy as np
+import json
 
 
 class TritonPythonModel:
-    def initialize(self, args):
-        torch.manual_seed(0)
-        self.model = Net()
-        self.model.eval()
-
+    """
+    This Python identity model passes the DLPack tensors as is. "OUTPUT_IS_GPU"
+    input controls whether the model should put the output in GPU or in CPU.
+    """
     def execute(self, requests):
         responses = []
         for request in requests:
-            input_tensor = pb_utils.get_input_tensor_by_name(request, "IN")
-            # This tensor is read-only, we need to make a copy
-            input_data_ro = input_tensor.as_numpy()
-            input_data = np.array(input_data_ro)
-            result = self.model(torch.tensor(input_data))
+            input0 = pb_utils.get_input_tensor_by_name(request, "INPUT0")
+            print('ISCPU', input0.is_cpu())
+            gpu_output = pb_utils.get_input_tensor_by_name(
+                request, "GPU_OUTPUT").as_numpy()
 
-            out_tensor = pb_utils.Tensor("OUT", result.detach().numpy())
-            responses.append(pb_utils.InferenceResponse([out_tensor]))
+            if input0.is_cpu():
+                if not gpu_output[0]:
+                    output0 = pb_utils.Tensor.from_dlpack(
+                        "OUTPUT0", input0.to_dlpack())
+                else:
+                    outptu0_pytorch = from_dlpack(input0.to_dlpack()).cuda()
+                    output0 = pb_utils.Tensor.from_dlpack(
+                        "OUTPUT0", to_dlpack(outptu0_pytorch))
+            else:
+                if gpu_output[0]:
+                    output0 = pb_utils.Tensor.from_dlpack(
+                        "OUTPUT0", input0.to_dlpack())
+                else:
+                    outptu0_pytorch = from_dlpack(input0.to_dlpack()).cpu()
+                    output0 = pb_utils.Tensor.from_dlpack(
+                        "OUTPUT0", to_dlpack(outptu0_pytorch))
+
+            next_gpu_output = pb_utils.Tensor("NEXT_GPU_OUTPUT",
+                                              gpu_output[1:])
+            responses.append(
+                pb_utils.InferenceResponse([output0, next_gpu_output]))
+
         return responses

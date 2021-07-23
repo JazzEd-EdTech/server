@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+# Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -25,66 +25,64 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-REPO_VERSION=${NVIDIA_TRITON_SERVER_VERSION}
-if [ "$#" -ge 1 ]; then
-    REPO_VERSION=$1
-fi
-if [ -z "$REPO_VERSION" ]; then
-    echo -e "Repository version must be specified"
-    echo -e "\n***\n*** Test Failed\n***"
-    exit 1
-fi
-
-export CUDA_VISIBLE_DEVICES=0
-
-TEST_RESULT_FILE='test_results.txt'
-RET=0
-rm -f *.log *.db
-EXPECTED_NUM_TESTS="1"
-
-mkdir -p models
-cp -r /data/inferenceserver/${REPO_VERSION}/qa_identity_model_repository/savedmodel_zero_1_object models/
-
-FUZZTEST=fuzztest.py
-FUZZ_LOG=`pwd`/fuzz.log
-DATADIR=`pwd`/models
 SERVER=/opt/tritonserver/bin/tritonserver
-SERVER_ARGS="--model-repository=$DATADIR"
-source ../common/util.sh
+SERVER_ARGS="--model-repository=`pwd`/models --log-verbose=1"
+CLIENT_PY=./python_unittest.py
+CLIENT_LOG="./client.log"
+EXPECTED_NUM_TESTS="1"
+TEST_RESULT_FILE='test_results.txt'
+SERVER_LOG="./inference_server.log"
+REPO_VERSION=${NVIDIA_TRITON_SERVER_VERSION}
+DATADIR=${DATADIR:="/data/inferenceserver/${REPO_VERSION}"}
+
+RET=0
+rm -fr *.log ./models
+
+source ../../common/util.sh
+
+# Uninstall the non CUDA version of PyTorch
+pip3 uninstall -y torch
+pip3 install torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f https://download.pytorch.org/whl/torch_stable.html
+pip3 install tensorflow
+
+rm -fr *.log ./models
+
+mkdir -p models/dlpack_test/1/
+cp ../../python_models/dlpack_test/model.py models/dlpack_test/1/
+cp ../../python_models/dlpack_test/config.pbtxt models/dlpack_test
 
 run_server
 if [ "$SERVER_PID" == "0" ]; then
     echo -e "\n***\n*** Failed to start $SERVER\n***"
     cat $SERVER_LOG
-    exit 1
+    RET=1
 fi
 
 set +e
+python3 $CLIENT_PY > $CLIENT_LOG 2>&1 
 
-# Test health
-python $FUZZTEST -v >> ${FUZZ_LOG} 2>&1
 if [ $? -ne 0 ]; then
-    cat ${FUZZ_LOG}
+    echo -e "\n***\n*** python_unittest.py FAILED. \n***"
     RET=1
 else
     check_test_results $TEST_RESULT_FILE $EXPECTED_NUM_TESTS
     if [ $? -ne 0 ]; then
-        cat $TEST_RESULT_FILE
+        cat $CLIENT_LOG
         echo -e "\n***\n*** Test Result Verification Failed\n***"
         RET=1
     fi
 fi
-
 set -e
 
 kill $SERVER_PID
 wait $SERVER_PID
 
-
-if [ $RET -eq 0 ]; then
-    echo -e "\n***\n*** Test Passed\n***"
+if [ $RET -eq 1 ]; then
+    cat $CLIENT_LOG
+    cat $SERVER_LOG
+    echo -e "\n***\n*** Unittest test FAILED. \n***"
 else
-    echo -e "\n***\n*** Test FAILED\n***"
+    echo -e "\n***\n*** Unittest test PASSED. \n***"
 fi
 
 exit $RET
